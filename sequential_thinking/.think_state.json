@@ -1,0 +1,22 @@
+{
+  "thoughtHistory": [
+    {
+      "thought": "doing step",
+      "thoughtNumber": 1,
+      "totalThoughts": 2,
+      "nextThoughtNeeded": true,
+      "isRevision": false,
+      "revisesThought": null,
+      "branchFromThought": null,
+      "branchId": null,
+      "needsMoreThoughts": false,
+      "planStep": "Step1"
+    }
+  ],
+  "branches": {},
+  "plan": [
+    "Step1",
+    "Step2"
+  ],
+  "currentStepIndex": 0
+}
