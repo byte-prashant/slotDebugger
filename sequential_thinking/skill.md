@@ -1,100 +1,81 @@
 ---
 name: sequential-thinking
-description: "Dynamic, reflective problem-solving through structured sequential thoughts with support for branching, revision, and adaptive depth. Use this skill when: (1) Breaking down complex problems into steps, (2) Planning and design with room for revision, (3) Analysis that might need course correction, (4) Problems where the full scope is not clear initially, (5) Multi-step solutions requiring maintained context, (6) Situations where irrelevant information must be filtered out, (7) Any task benefiting from hypothesis generation, verification, and iterative refinement. Triggers: think through, step by step, break this down, sequential thinking, reason through, analyze step by step, think carefully, or when a problem clearly benefits from structured multi-step reasoning."
+description: Use this skill for tasks that benefit from explicit, traceable step-by-step reasoning with persistent state. Trigger it when the user asks to think step by step, break down a complex problem, reason carefully, debug iteratively, revise earlier conclusions, or explore alternative branches of analysis.
 ---
 
-# 🧠 Sequential Thinking (Python CLI + Planning + MCP Parity)
+# Sequential Thinking
 
-## 🚨 Core Rule (NON-NEGOTIABLE)
+Use this skill when the work benefits from a structured reasoning loop instead of a one-shot answer.
 
-> AI MUST NOT reason in free text.  
-> ALL reasoning MUST happen via CLI calls to `think.py`.
+## Use This Skill For
 
----
+- Complex debugging or investigation
+- Problems with unclear scope at the start
+- Analysis that may need correction midstream
+- Work that benefits from a persisted plan and thought history
 
-# 🎯 Purpose
+## Files
 
-This skill enforces:
-- Step-by-step reasoning
-- Deterministic execution
-- No hallucinated jumps
-- Full traceability
-- Planning-first approach
+- `think.py`: CLI entrypoint for the reasoning workflow
+- `.think_state.json`: persisted state for plan progress, thought history, and branches
 
----
+## Workflow
 
-# ⚙️ Execution Model
-
-```
-RESET → PLAN → STEP → THOUGHT → STORE → VALIDATE → NEXT → LOOP → TERMINATE
-```
-
----
-
-# 📂 Script Location
-
-```
-think.py
-```
-
----
-
-# 🧩 Workflow (STRICT)
-
-## 1. Reset (MANDATORY)
+1. Reset state before starting a new reasoning session:
 
 ```bash
-python think.py --reset
+python3 think.py --reset
 ```
 
----
-
-## 2. Set Plan (MANDATORY)
+2. Set the plan. `--setPlan` accepts either comma-separated steps or a JSON array string:
 
 ```bash
-python think.py --setPlan "Check RTP,Analyze reels,Validate RNG,Check bonus"
+python3 think.py --setPlan "Check RTP,Analyze reels,Validate RNG,Check bonus"
 ```
 
----
-
-## 3. Submit Thought
+3. Record a thought for the current plan step:
 
 ```bash
-python think.py \
-  --thought "RTP is -0.8% lower than expected" \
+python3 think.py \
+  --thought "RTP is lower than expected" \
   --thoughtNumber 1 \
   --totalThoughts 5 \
   --nextThoughtNeeded true
 ```
 
----
-
-## 4. Advance Step
+4. Advance to the next plan step when the current one is complete:
 
 ```bash
-python think.py --nextStep
+python3 think.py --nextStep
 ```
 
----
-
-## 5. Revision
+5. Check status at any time:
 
 ```bash
-python think.py \
-  --thought "Correction: issue is from bonus" \
+python3 think.py --status
+```
+
+## Revisions
+
+Use a revision when a later finding corrects an earlier thought.
+
+```bash
+python3 think.py \
+  --thought "Correction: the mismatch comes from bonus logic" \
   --thoughtNumber 3 \
   --totalThoughts 5 \
   --nextThoughtNeeded true \
-  --isRevision --revisesThought 1
+  --isRevision \
+  --revisesThought 1
 ```
 
----
+## Branching
 
-## 6. Branch
+Use branching when you want to explore an alternative explanation without losing the main path.
 
 ```bash
-python think.py \
-  --thought "Alternative: RNG issue" \
+python3 think.py \
+  --thought "Alternative hypothesis: RNG distribution is biased" \
   --thoughtNumber 4 \
   --totalThoughts 7 \
   --nextThoughtNeeded true \
@@ -102,101 +83,19 @@ python think.py \
   --branchId rng-check
 ```
 
----
+## Operating Rules
 
-## 7. Extend Depth
+- Reset once at the start of a new session.
+- Set a plan before recording thoughts.
+- Keep `--thoughtNumber` sequential and do not skip numbers.
+- Use `--nextThoughtNeeded true` until the final thought, then set it to `false`.
+- Use `--isRevision --revisesThought <n>` when correcting earlier reasoning.
+- Use `--branchFromThought <n> --branchId <id>` when exploring alternatives.
+- Call `--nextStep` only after finishing the current plan step.
+- Keep each thought concise, evidence-based, and tied to the current step.
 
-```bash
-python think.py \
-  --thought "Need deeper analysis" \
-  --thoughtNumber 6 \
-  --totalThoughts 8 \
-  --nextThoughtNeeded true \
-  --needsMoreThoughts
-```
+## Notes
 
----
-
-## 8. Status
-
-```bash
-python think.py --status
-```
-
----
-
-# 📊 Output Format
-
-```
-💭 Thought 3/7
-📍 Step: Analyze reels
-RNG distribution looks incorrect
-```
-
----
-
-# 📌 Parameters
-
-| Parameter | Type | Required | Description |
-|----------|------|----------|------------|
-| --thought | string | yes | Thought content |
-| --thoughtNumber | int | yes | Sequential step |
-| --totalThoughts | int | yes | Estimated steps |
-| --nextThoughtNeeded | bool | yes | Continue or stop |
-| --isRevision | flag | no | Revision |
-| --revisesThought | int | no | Target thought |
-| --branchFromThought | int | no | Branch start |
-| --branchId | string | no | Branch ID |
-| --needsMoreThoughts | flag | no | Extend depth |
-
----
-
-# 🔥 Behavioral Rules (STRICT)
-
-1. MUST reset before session  
-2. MUST define plan before thinking  
-3. MUST follow sequential numbering  
-4. MUST NOT skip thoughts  
-5. MUST attach plan step to every thought  
-6. MUST use revision for correction  
-7. MUST use branching for alternatives  
-8. MUST NOT reason outside CLI  
-9. MUST terminate explicitly  
-10. MUST ignore irrelevant information  
-11. MUST validate hypotheses against prior thoughts  
-
----
-
-# 🧠 State Management
-
-- Stored in `.think_state.json`
-- `thoughtHistory` is append-only
-- `branches` tracks alternative paths
-- Plan state persists across steps
-
----
-
-# 🚀 Example (RTP Debugging)
-
-## Plan
-```
-1. Check RTP
-2. Analyze reels
-3. Validate RNG
-4. Check bonus
-```
-
-## Execution
-```
-Thought 1 → RTP mismatch
-Thought 2 → Reel weights OK
-Thought 3 → RNG issue found
-```
-
----
-
-# 🧠 Key Insight
-
-This is NOT a prompt.
-
-This is a **deterministic reasoning protocol for AI agents**.
+- The current script automatically attaches the active plan step to each thought.
+- `--status` reports the current thought number, whether another thought is needed, the current plan step, and plan progress.
+- This skill should describe only the CLI behavior implemented in `think.py`. Do not document unsupported flags here.

@@ -1,0 +1,7 @@
+
+# Core dependency for Excel support
+openpyxl>=3.1.0
+
+# (Optional - future use)
+# pandas>=2.0.0
+# numpy>=1.24.0
