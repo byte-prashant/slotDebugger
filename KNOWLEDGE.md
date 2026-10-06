@@ -2,7 +2,7 @@
 
 > Domain/reference docs live in [knowledge/](knowledge/README.md). This file tracks status and remaining work.
 
-**P0 update (2026-10-06):** bugs 1–6, 9, 10 and the test-layout items below are fixed; 27 tests pass via a single `pytest`. Items still open from P0: relative/configurable tolerance (bug 8), think.py validation (bug 11), tuple order still heuristic-based.
+**P0 update (2026-10-06):** bugs 1–6, 9, 10 and the test-layout items below are fixed; 27 tests pass via a single `pytest`. Items still open from P0: relative/configurable tolerance (bug 8), think.py `--history`/`--export` and atomic writes (bug 11 validation itself is now done: sequential numbers, valid revision/branch refs, strict booleans, clean errors, `--state` flag), tuple order still heuristic-based.
 
 _Snapshot: 2026-10-06, commit `7fe8725`. Tests: 17 pass (8 + 9), but see "Known bugs" — some passing tests are vacuous._
 

@@ -6,6 +6,7 @@ Sequential thinking state machine (Python version) with Planning Layer.
 import json
 import os
 import argparse
+import sys
 from typing import Dict, List, Optional
 
 try:
@@ -13,7 +14,11 @@ try:
 except NameError:
     BASE_DIR = os.getcwd()
 
-STATE_FILE = os.path.join(BASE_DIR, ".think_state.json")
+STATE_FILE = os.environ.get("THINK_STATE_FILE") or os.path.join(BASE_DIR, ".think_state.json")
+
+
+class ThinkError(ValueError):
+    """User-facing validation error; reported without a traceback."""
 
 
 class ThoughtData:
@@ -83,9 +88,12 @@ def get_current_plan_step(state: State) -> Optional[str]:
     return state.plan[state.currentStepIndex]
 
 
-def advance_plan(state: State):
+def advance_plan(state: State) -> bool:
+    """Move to the next plan step. Returns False if already on the last step."""
     if state.currentStepIndex < len(state.plan) - 1:
         state.currentStepIndex += 1
+        return True
+    return False
 
 
 def attach_plan_step(thought: Dict, step: Optional[str]):
@@ -135,7 +143,42 @@ def parse_bool(value):
         return value
     if value is None:
         return None
-    return str(value).lower() in ("true", "1", "yes")
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes"):
+        return True
+    if text in ("false", "0", "no"):
+        return False
+    raise ThinkError(f"invalid boolean {value!r} (use true/false)")
+
+
+def validate_thought(state: State, thought: Dict) -> None:
+    """Raise ThinkError if the thought is inconsistent with the saved state."""
+    number = thought["thoughtNumber"]
+    expected = len(state.thoughtHistory) + 1
+
+    if not (thought["thought"] or "").strip():
+        raise ThinkError("--thought must not be empty")
+    if number != expected:
+        raise ThinkError(f"thoughtNumber must be {expected} (got {number}); numbers are sequential")
+    if thought["totalThoughts"] < 1:
+        raise ThinkError("totalThoughts must be >= 1")
+
+    revises = thought["revisesThought"]
+    branch_from = thought["branchFromThought"]
+    branch_id = thought["branchId"]
+
+    if thought["isRevision"] and revises is None:
+        raise ThinkError("--isRevision requires --revisesThought")
+    if revises is not None and not thought["isRevision"]:
+        raise ThinkError("--revisesThought requires --isRevision")
+    if (branch_from is None) != (branch_id is None):
+        raise ThinkError("--branchFromThought and --branchId must be used together")
+    if thought["isRevision"] and branch_from is not None:
+        raise ThinkError("a thought cannot be both a revision and a branch")
+
+    for flag, ref in (("--revisesThought", revises), ("--branchFromThought", branch_from)):
+        if ref is not None and not 1 <= ref < number:
+            raise ThinkError(f"{flag} {ref} must refer to an earlier thought (1..{number - 1})")
 
 
 def parse_plan(value: Optional[str]) -> Optional[List[str]]:
@@ -148,13 +191,14 @@ def parse_plan(value: Optional[str]) -> Optional[List[str]]:
             arr = json.loads(value)
             return [str(x) for x in arr]
         except Exception:
-            raise ValueError("Invalid JSON for --setPlan")
+            raise ThinkError("Invalid JSON for --setPlan")
     # comma separated
     return [x.strip() for x in value.split(",") if x.strip()]
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
+    parser.add_argument("--state", help="state file path (default: .think_state.json beside this script, or $THINK_STATE_FILE)")
     parser.add_argument("--thought")
     parser.add_argument("--thoughtNumber", type=int)
     parser.add_argument("--totalThoughts", type=int)
@@ -173,7 +217,21 @@ def main():
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--reset", action="store_true")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.state:
+        global STATE_FILE
+        STATE_FILE = args.state
+
+    try:
+        run(args, parser)
+    except ThinkError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def run(args, parser):
 
     if args.reset:
         if os.path.exists(STATE_FILE):
@@ -183,11 +241,15 @@ def main():
 
     state = load_state()
 
+    modes = [bool(args.setPlan), args.nextStep, args.status, bool(args.thought)]
+    if sum(modes) > 1:
+        raise ThinkError("use only one of --setPlan, --nextStep, --status, --thought per call")
+
     # set plan
     if args.setPlan:
         steps = parse_plan(args.setPlan)
         if not steps:
-            raise ValueError("--setPlan must contain at least one step")
+            raise ThinkError("--setPlan must contain at least one step")
         set_plan(state, steps)
         save_state(state)
         print({"plan": state.plan, "currentStep": get_current_plan_step(state)})
@@ -195,9 +257,11 @@ def main():
 
     # advance plan
     if args.nextStep:
-        advance_plan(state)
+        if not state.plan:
+            raise ThinkError("no plan set; use --setPlan first")
+        moved = advance_plan(state)
         save_state(state)
-        print({"currentStep": get_current_plan_step(state)})
+        print({"currentStep": get_current_plan_step(state), "advanced": moved})
         return
 
     if args.status:
@@ -209,11 +273,11 @@ def main():
         return
 
     if args.thoughtNumber is None or args.totalThoughts is None:
-        raise ValueError("thoughtNumber & totalThoughts required")
+        raise ThinkError("--thoughtNumber and --totalThoughts are required")
 
     next_needed = parse_bool(args.nextThoughtNeeded)
     if next_needed is None:
-        raise ValueError("nextThoughtNeeded required")
+        raise ThinkError("--nextThoughtNeeded is required (true/false)")
 
     current_step = get_current_plan_step(state)
 
@@ -229,11 +293,15 @@ def main():
         planStep=current_step,
     ).to_dict()
 
+    validate_thought(state, thought)
+    if not state.plan:
+        print("warning: no plan set; thought is not tied to a plan step", file=sys.stderr)
+
     # append main history
     state.thoughtHistory.append(thought)
 
     # handle branch
-    if args.branchFromThought and args.branchId:
+    if args.branchFromThought is not None and args.branchId:
         state.branches.setdefault(args.branchId, []).append(thought)
 
     save_state(state)
@@ -242,4 +310,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

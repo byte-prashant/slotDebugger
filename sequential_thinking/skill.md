@@ -94,6 +94,18 @@ python3 think.py \
 - Call `--nextStep` only after finishing the current plan step.
 - Keep each thought concise, evidence-based, and tied to the current step.
 
+## Validation
+
+`think.py` exits with code 2 and an `error:` message (no traceback) when:
+
+- `--thoughtNumber` is not the next number in sequence
+- `--revisesThought` / `--branchFromThought` don't point to an earlier thought, or `--isRevision`/`--revisesThought` and `--branchFromThought`/`--branchId` aren't paired correctly
+- `--nextThoughtNeeded` isn't `true`/`false`
+- `--nextStep` is used with no plan (at the last step it reports `advanced: False`)
+- more than one of `--setPlan`, `--nextStep`, `--status`, `--thought` is passed in one call
+
+Use `--state <path>` (or `$THINK_STATE_FILE`) to keep separate sessions in separate state files.
+
 ## Notes
 
 - The current script automatically attaches the active plan step to each thought.
