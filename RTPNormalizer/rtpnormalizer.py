@@ -1,24 +1,30 @@
-# Re-run the test suite cleanly
-
 from typing import List, Dict
-import unittest
 
 class RTPDependencyResolver:
     def __init__(self, components: List[Dict]):
         self.components = components
 
+    TOTAL_MARKER = "_total"
+
     def build_dependency_graph(self) -> Dict:
+        """Map each `<prefix>_total_<suffix>` component to its `<prefix>_*` children.
+
+        Children are components sharing the `<prefix>_` prefix, excluding the
+        parent itself and any other total (which are parents in their own right).
+        """
         graph = {}
         for comp in self.components:
             name = comp["name"]
-            if "total" in name:
-                base = name.replace("_total", "")
-                children = []
-                for c in self.components:
-                    if c["name"].startswith(base) and c["name"] != name:
-                        children.append(c["name"])
-                if children:
-                    graph[name] = {"children": children}
+            if self.TOTAL_MARKER not in name:
+                continue
+            prefix = name.split(self.TOTAL_MARKER, 1)[0]
+            children = [
+                c["name"] for c in self.components
+                if c["name"].startswith(prefix + "_")
+                and self.TOTAL_MARKER not in c["name"]
+            ]
+            if children:
+                graph[name] = {"children": children}
         return graph
 
 class RTPNormalizer:
@@ -38,7 +44,6 @@ class RTPNormalizer:
                 "rtp": round(total_win / self.total_game_win, 6),
                 "hit_rate": round(freq / self.total_plays, 6)
             }
-        print(normalized)
         return {
             "normalized_components": normalized,
             "dependency_graph": self.dependency_graph
@@ -60,7 +65,7 @@ class RTPAnalyzer:
         return issues
 
     def total_rtp(self):
-        return sum(v["rtp"] for k, v in self.components.items() if "total" in k)
+        return sum(v["rtp"] for k, v in self.components.items() if "_total" in k)
 
     def run(self):
         issues = self.validate_totals()

@@ -35,7 +35,7 @@ base_line_win	(39105990.6000, 94967255)
 base_total_win	(73998487.5000, 94967255)
 ultraboost_cash_win	(18078533.5000, 5032745)
 ultraboost_total_win	(19966483.5000, 5032745)
-utraboosst_line_win	(1887950.0000, 5032745)
+ultraboost_line_win	(1887950.0000, 5032745)
 Round statistics	10000000 plays
 Standard deviation	0.1484
 RTP (0 - 10000000)	93.9190
@@ -93,6 +93,53 @@ class TestRTPReader(unittest.TestCase):
         # Ensure RTP rows are not included
         names = [c["name"] for c in components]
         self.assertNotIn("RTP (0 - 10000000)", names)
+
+    def test_tuple_parsing_integer_win_keeps_win_freq_order(self):
+        rtp, freq = RTPValueParser().parse("(100, 5)")
+        self.assertEqual((rtp, freq), (100.0, 5))
+
+    def test_tuple_parsing_reversed_order(self):
+        rtp, freq = RTPValueParser().parse("(5, 100.5)")
+        self.assertEqual((rtp, freq), (100.5, 5))
+
+    def test_no_stdout_noise(self):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            RTPService(ReaderFactory.get_reader(self.temp_file.name)).process(self.temp_file.name)
+        self.assertEqual(buf.getvalue(), "")
+
+
+class TestXLSXReader(unittest.TestCase):
+
+    def test_xlsx_matches_csv_and_keeps_zero(self):
+        openpyxl = __import__("pytest").importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for line in SAMPLE_INPUT.splitlines():
+            ws.append(line.split("\t"))
+        ws.append([])
+        path = tempfile.mktemp(suffix=".xlsx")
+        try:
+            wb.save(path)
+            result = RTPService(ReaderFactory.get_reader(path)).process(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(result["metadata"]["Engine Name"], "blazing-7s-cashway")
+        self.assertEqual(len(result["components"]), 6)
+
+    def test_zero_numeric_cell_not_dropped(self):
+        openpyxl = __import__("pytest").importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Jackpot RTP", 0])
+        path = tempfile.mktemp(suffix=".xlsx")
+        try:
+            wb.save(path)
+            result = RTPService(ReaderFactory.get_reader(path)).process(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(result["metadata"]["Jackpot RTP"], "0")
 
 
 if __name__ == "__main__":

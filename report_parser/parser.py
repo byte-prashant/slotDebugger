@@ -71,12 +71,14 @@ class RTPValueParser:
 
         first, second = parts
 
-        if "." in first:
-            rtp = float(first)
-            freq = int(float(second))
-        else:
+        # Reports emit (win, frequency). Only swap when the order is
+        # unambiguously reversed: integer first, decimal second.
+        if "." not in first and "." in second:
             freq = int(float(first))
             rtp = float(second)
+        else:
+            rtp = float(first)
+            freq = int(float(second))
 
         return rtp, freq
 
@@ -151,7 +153,7 @@ class CSVReader(IReportReader):
 
     def read(self, file_path: str) -> RTPReport:
         rows = []
-        with open(file_path, "r") as f:
+        with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
             reader = csv.reader(f, delimiter='\t')
             rows = list(reader)
         return self.parser.parse(rows)
@@ -169,12 +171,12 @@ class XLSXReader(IReportReader):
         self.parser = parser
 
     def read(self, file_path: str) -> RTPReport:
-        wb = openpyxl.load_workbook(file_path)
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         sheet = wb.active
 
         rows = []
         for row in sheet.iter_rows(values_only=True):
-            rows.append([str(cell) if cell else "" for cell in row])
+            rows.append(["" if cell is None else str(cell) for cell in row])
 
         return self.parser.parse(rows)
 
@@ -208,7 +210,6 @@ class RTPService:
 
     def process(self, file_path: str) -> Dict:
         report = self.reader.read(file_path)
-        print(report)
         return report.to_dict()
 
 
