@@ -88,9 +88,18 @@ def analyze(tmp_path, text=EXACT_REPORT):
     return pipeline.analyze(str(report))
 
 
+def _write(tmp_path, text=EXACT_REPORT):
+    report = tmp_path / "report.csv"
+    report.write_text(text)
+    return report
+
+
 @pytest.fixture
 def analysis(tmp_path):
-    return analyze(tmp_path)
+    result = analyze(tmp_path)
+    # the game's bet is not in the report; a reviewed aggregate carries it as a formula
+    result["aggregate"]["components"]["bet"] = 75.0
+    return result
 
 
 # ---- the exact conversion ----
@@ -134,23 +143,33 @@ def test_unmatched_key_is_null_not_guessed(analysis):
     assert "mystery_feature: nothing in the report matches this key (left null)" in notes
 
 
-def test_bet_is_null_when_the_report_cannot_say(tmp_path):
-    """Without a staked total there is no bet to derive; it must not fall back to 0."""
-    result = analyze(tmp_path, EXACT_REPORT.replace("Total amount staked\t7500.0\n", ""))
-    out, notes = report_formatter.apply(PERCENT, result)
+def test_bet_is_null_unless_the_aggregate_has_a_formula_for_it(tmp_path):
+    """The bet is never worked out from the report (staked / plays is only as good as the
+    stake column); it comes from an aggregate formula or it is null."""
+    out, notes = report_formatter.apply(PERCENT, analyze(tmp_path))
     assert out["bet"] is None
     assert out["total"] == 96.32  # the rest is still measured
-    assert any("no stake/play count" in n for n in notes)
+    assert any("no 'bet' formula" in n for n in notes)
 
 
-def test_missing_overall_rtp_is_called_out(tmp_path):
-    """Without an RTP to scale by, the numbers mean something else and must say so."""
-    text = (EXACT_REPORT
-            .replace("Total amount staked\t7500.0\n", "")
-            .replace("Total RTP\t96.32\n", ""))
-    out, notes = report_formatter.apply(PERCENT, analyze(tmp_path, text))
-    assert any("no overall RTP" in n for n in notes)
-    assert out["total"] == 100.0  # shares of total win, not RTP
+def test_total_is_the_rtp_the_report_states_not_a_sum_of_total_rows(tmp_path):
+    """`total` used to add the share of every row named `*_total*`. A sub-breakdown that
+    overlaps the others (here a jackpot row) made it come out wrong."""
+    text = EXACT_REPORT.replace("RTP (0 - 100)", "fg_jackpot_total\t(2000.0, 1)\nRTP (0 - 100)")
+    result = analyze(tmp_path, text)
+    out, _ = report_formatter.apply(PERCENT, result)
+    assert out["total"] == 96.32
+    assert result["analysis"]["total_rtp"] == pytest.approx(0.9632)
+
+
+def test_missing_overall_rtp_leaves_rtp_values_null(tmp_path):
+    """No stated RTP, no RTP-scaled values: they are null and say why, never a guess."""
+    text = EXACT_REPORT.replace("Total RTP\t96.32\n", "").replace("Game RTP\t96.32\n", "")
+    result = analyze(tmp_path, text)
+    out, notes = report_formatter.apply(PERCENT, result)
+    assert out["total"] is None and out["components"]["BG"] is None
+    assert any("'total_rtp' formula" in n for n in notes)
+    assert result["analysis"]["total_rtp"] is None
 
 
 def test_feature_index_never_crosses(analysis):
@@ -222,3 +241,48 @@ def test_roles_and_attributes_are_recognised_by_meaning():
     assert naming.role("total_rtp") == "total"
     assert naming.attribute("Hit Rate") == "hit_rate"
     assert naming.is_identifier("feature") and not naming.is_identifier("rtp")
+
+
+def test_report_values_come_from_the_aggregate(analysis):
+    """Editing a computed value in the aggregate changes the report."""
+    out, _ = report_formatter.apply(PERCENT, analysis)
+    analysis["aggregate"]["components"]["base_total_win.rtp_vs_stake"] = 0.5
+    edited, _ = report_formatter.apply(PERCENT, analysis)
+    assert out["components"]["BG"] == 40.6 and edited["components"]["BG"] == 50.0
+
+
+# ---- diff against the expected report ----
+
+def test_diff_flags_mismatch_missing_and_ok():
+    expected = {"bet": 75, "total": 96.32, "components": {"BG": 40.60, "FG12": 13.65, "FG3": 7.85}}
+    actual = {"bet": None, "total": 96.32, "components": {"BG": 40.65, "FG12": 12.10, "FG3": 7.85}}
+    result = report_formatter.diff(expected, actual)
+    by_key = {d["key"]: d for d in result["diffs"]}
+    assert result["tolerance"] == pytest.approx(0.1)  # 0.001 of a stake, in percent
+    assert by_key["bet"]["status"] == "missing"
+    assert by_key["components.BG"]["status"] == "ok"  # 0.05 points: within tolerance
+    assert by_key["components.FG12"]["status"] == "mismatch"
+    assert by_key["components.FG12"]["delta"] == pytest.approx(-1.55)
+    assert result["summary"] == {"ok": 3, "mismatch": 1, "missing": 1}
+    assert report_formatter.open_keys(result) == ["bet", "components.FG12"]
+
+
+def test_diff_tolerance_follows_scale_and_key():
+    result = report_formatter.diff({"total": 0.9632, "hit_rate": 0.08, "bet": 75},
+                                   {"total": 0.9640, "hit_rate": 0.0815, "bet": 75.5})
+    by_key = {d["key"]: d for d in result["diffs"]}
+    assert by_key["total"]["status"] == "ok"  # 0.0008 <= 0.001 as a fraction
+    assert by_key["hit_rate"]["status"] == "mismatch"  # ratios to 0.001 whatever the scale
+    assert by_key["bet"]["status"] == "mismatch"  # bets compared exactly
+
+
+def test_diff_labels_list_items_by_their_name():
+    result = report_formatter.diff(NESTED, {"rtp": {}, "features": [{"name": "FG1", "rtp": 7.82}]})
+    keys = [d["key"] for d in result["diffs"]]
+    assert "features.FG1.rtp" in keys and "features.FG12.rtp" in keys
+    assert {d["key"]: d["status"] for d in result["diffs"]}["features.FG12.rtp"] == "missing"
+
+
+def test_diff_tolerance_override():
+    result = report_formatter.diff({"total": 96.32}, {"total": 96.0}, tolerance=0.5)
+    assert result["diffs"][0]["status"] == "ok"

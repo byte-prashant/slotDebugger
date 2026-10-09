@@ -14,6 +14,8 @@ import shutil
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+import rtp_aggregator
+
 DIR_NAME = "slotdebugger"
 MARKER = "workspace.json"
 SUBDIRS = ("reports", "analysis", "data", "state")
@@ -180,8 +182,7 @@ class Workspace:
         it has one. The run index is always taken from the native `result`, so `runs`
         stays comparable across games whatever shape their reports are written in.
         """
-        stem = os.path.splitext(os.path.basename(report_path))[0]
-        out = self.path("analysis", f"{stem}.json")
+        out = self.analysis_path(report_path)
         self._write_json(out, result if output is None else output)
         runs = self.runs()
         runs.append({
@@ -194,6 +195,58 @@ class Workspace:
         })
         self._write_json(self.runs_file, runs)
         return out
+
+    def analysis_path(self, report_path: str) -> str:
+        """What `analyze` printed: `<report>.json`, in the expected report's shape when there is one."""
+        stem = os.path.splitext(os.path.basename(report_path))[0]
+        return self.path("analysis", f"{stem}.json")
+
+    def diff_path(self, report_path: str) -> str:
+        """`<report>.diff.json`: the analysis compared with the expected report."""
+        return self.analysis_path(report_path)[: -len(".json")] + ".diff.json"
+
+    def aggregate_path(self, report_path: str) -> str:
+        """Formulas: `<report>.aggregate.json`. What a reviewer corrects."""
+        stem = os.path.splitext(os.path.basename(report_path))[0]
+        return self.path("analysis", f"{stem}.aggregate.json")
+
+    def inputs_path(self, report_path: str) -> str:
+        """Measured numbers: `<report>.inputs.json`. Regenerated from the report, never edited."""
+        return self.aggregate_path(report_path)[: -len(".aggregate.json")] + ".inputs.json"
+
+    def save_aggregate(self, report_path: str, doc: Dict) -> str:
+        """Write the formulas and the inputs to their two files; returns the formulas path."""
+        formulas, inputs = rtp_aggregator.split(doc)
+        self._write_json(self.inputs_path(report_path), inputs)
+        out = self.aggregate_path(report_path)
+        self._write_json(out, formulas)
+        return out
+
+    def load_aggregate(self, report_path: str) -> Optional[Dict]:
+        """Formulas and inputs joined; None when there is no formulas file."""
+        path = self.aggregate_path(report_path)
+        if not os.path.isfile(path):
+            return None
+        inputs = self.inputs_path(report_path)
+        if not os.path.isfile(inputs):
+            raise WorkspaceError(f"{os.path.basename(inputs)} is missing; re-run `slotdebug analyze`")
+        return rtp_aggregator.join(self._read_json(path), self._read_json(inputs))
+
+    def load_reviewed(self, report_path: str) -> Optional[Dict]:
+        """The formulas file, if someone corrected it and marked it `reviewed` (no inputs)."""
+        try:
+            path = self.aggregate_path(report_path)
+            doc = self._read_json(path) if os.path.isfile(path) else None
+        except ValueError:  # unreadable JSON: treat as not reviewed rather than fail analyze
+            return None
+        return doc if isinstance(doc, dict) and doc.get("reviewed") is True else None
+
+    def set_aside_aggregate(self, report_path: str) -> str:
+        """Move a reviewed formulas file that no longer fits its report out of the way, never delete it."""
+        path = self.aggregate_path(report_path)
+        aside = path[: -len(".aggregate.json")] + ".aggregate.stale.json"
+        os.replace(path, aside)
+        return aside
 
     def runs(self) -> List[Dict]:
         """Load runs index; handle legacy format (dict → empty list)."""

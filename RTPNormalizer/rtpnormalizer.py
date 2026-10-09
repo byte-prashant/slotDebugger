@@ -28,16 +28,27 @@ class RTPDependencyResolver:
         return graph
 
 class RTPNormalizer:
-    def __init__(self, components: List[Dict], metadata: Dict, dependency_graph: Dict = None):
+    def __init__(self, components: List[Dict], metadata: Dict, dependency_graph: Dict = None,
+                 measured: Dict = None):
+        """`measured` maps a component name to `{"rtp", "hit_rate"}` computed elsewhere
+        (the aggregate file's formulas); rows it does not cover are computed here directly."""
+        self.measured = measured
         self.components = components
         self.total_plays = metadata["total_plays"]
         self.total_game_win = metadata["total_game_win"]
-        self.dependency_graph = dependency_graph or RTPDependencyResolver(components).build_dependency_graph()
+        self.dependency_graph = (RTPDependencyResolver(components).build_dependency_graph()
+                                 if dependency_graph is None else dependency_graph)
 
     def run(self):
         normalized = {}
         for c in self.components:
             name = c["name"]
+            if self.measured is not None and name in self.measured:
+                normalized[name] = {
+                    "rtp": round(self.measured[name]["rtp"], 6),
+                    "hit_rate": round(self.measured[name]["hit_rate"], 6),
+                }
+                continue
             total_win = c["rtp"]
             freq = c["frequency"]
             normalized[name] = {

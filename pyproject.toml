@@ -16,3 +16,4 @@ slotdebug = "slotdebugger.cli:main"
 packages = ["slotdebugger", "slotdebugger.report_formatter", "report_parser", "RTPNormalizer", "rtp_aggregator", "sequential_thinking"]
 
 [tool.setuptools.package-data]
+slotdebugger = ["skills/*.md"]

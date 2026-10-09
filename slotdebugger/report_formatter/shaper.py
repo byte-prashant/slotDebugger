@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Tuple
 
+import rtp_aggregator
 from slotdebugger.report_formatter import naming, template as tpl
 
 _UNAVAILABLE = object()  # a key we understood but the report cannot answer
@@ -17,6 +18,18 @@ def apply(template: Any, result: Dict) -> Tuple[Any, List[str]]:
     return shaper.walk(template, [], None), shaper.notes
 
 
+def matched_components(template: Any, names: List[str], meta: Dict) -> List[str]:
+    """Report rows the template's keys resolve to, in report order.
+
+    Matching looks at names only, so it can run before any value exists; it is how the
+    aggregate is limited to what the expected report mentions.
+    """
+    shaper = Shaper({"metadata": meta, "rows": names}, template)
+    shaper.walk(template, [], None)
+    hit = {n for n in shaper._matched.values() if n}
+    return [n for n in names if n in hit]
+
+
 class Shaper:
     """Walks the template once, resolving each key against the analysis.
 
@@ -26,12 +39,13 @@ class Shaper:
 
     def __init__(self, result: Dict, template: Any):
         self.meta = result.get("metadata") or {}
-        self.components = result.get("components") or {}
-        self.analysis = result.get("analysis") or {}
+        # every row the report has, so a key resolves to the same row whether or not the
+        # aggregate (which may cover only some rows) was built yet
+        self.rows = {n: None for n in (result.get("rows") or result.get("components") or {})}
+        self.aggregate = (result.get("aggregate") or {}).get("components") or {}
         self.notes: List[str] = []
-        self._by_flat = {naming.flat(n): n for n in self.components}
+        self._by_flat = {naming.flat(n): n for n in self.rows}
         self._matched: Dict[str, Optional[str]] = {}
-        self.base = self._rtp_base()
         self.scale = tpl.scale(template)
         self.places = tpl.default_places(self.scale)
 
@@ -73,6 +87,8 @@ class Shaper:
             return placeholder  # a label naming the component, not a measurement
         if comp is not None:
             value = self._attribute(key, comp, places)
+            if value is _UNAVAILABLE:
+                return None
             if value is not None:
                 return value
         value = self._scalar(key, path, places)
@@ -83,7 +99,8 @@ class Shaper:
         if numeric:  # only go looking for a component when a number is being asked for
             name = self._component(key, path)
             if name is not None:
-                return self._rtp(self.components[name]["rtp"], places)
+                value = self._component_rtp(name, places)
+                return None if value is _UNAVAILABLE else value
         value = naming.best_metadata(key, self.meta)
         if value is not None:
             number = _number(value)
@@ -96,18 +113,13 @@ class Shaper:
     def _scalar(self, key: str, path: List[str], places: int) -> Optional[Any]:
         """A key that means something other than one component's measurement."""
         if naming.flat(key) in self._by_flat:  # a component named exactly like the key wins
-            return self._rtp(self.components[self._by_flat[naming.flat(key)]]["rtp"], places)
+            self._matched[key] = self._by_flat[naming.flat(key)]
+            return self._component_rtp(self._by_flat[naming.flat(key)], places)
         kind = naming.role(key)
         if kind == "total":
-            return self._rtp(self.analysis.get("total_rtp", 0.0), places)
+            return self._computed("total_rtp", path, places, self.scale)
         if kind == "bet":
-            staked = _number(self.meta.get("Total amount staked"))
-            plays = _number(self.meta.get("Total number of plays"))
-            if staked and plays:
-                return round(staked / plays, 4)
-            self.notes.append(
-                f"{_label(path)}: report has no stake/play count to derive the bet from (left null)")
-            return _UNAVAILABLE
+            return self._computed("bet", path, places, 1)
         if kind == "plays":
             plays = _number(self.meta.get("Total number of plays"))
             if plays:
@@ -119,20 +131,19 @@ class Shaper:
     def _attribute(self, key: str, comp: str, places: int) -> Optional[Any]:
         """A measurement of the component currently in scope."""
         attr = naming.attribute(key)
-        data = self.components[comp]
         if attr == "rtp":
-            return self._rtp(data["rtp"], places)
+            return self._component_rtp(comp, places)
         if attr == "share":
-            return round(data["rtp"], 6)
+            return self._computed(rtp_aggregator.key(comp, "rtp"), [comp, attr], 6, 1)
         if attr == "hit_rate":
-            return round(data["hit_rate"], 6)
+            return self._computed(rtp_aggregator.key(comp, "hit_rate"), [comp, attr], 6, 1)
         return None
 
     # ---- component matching ----
     def _component(self, key: str, path: List[str]) -> Optional[str]:
         if key in self._matched:
             return self._matched[key]
-        name, score = naming.best_component(key, self.components)
+        name, score = naming.best_component(key, self.rows)
         if name is not None and score < naming.STRONG:
             self.notes.append(f"{_label(path)} -> {name} (uncertain match, score {score:.2f})")
         elif name is not None:
@@ -141,25 +152,21 @@ class Shaper:
         return name
 
     # ---- values ----
-    def _rtp(self, share: float, places: Optional[int] = None) -> float:
-        """A component's share of total win, on the template's scale and precision."""
-        return round(share * self.base * self.scale,
-                     self.places if places is None else places)
+    def _component_rtp(self, name: str, places: int) -> Any:
+        """A component's RTP exactly as the aggregate's formula computed it."""
+        return self._computed(rtp_aggregator.key(name, "rtp_vs_stake"), [name], places, self.scale)
 
-    def _rtp_base(self) -> float:
-        """Overall RTP as a fraction; the normalizer's shares are relative to it."""
-        for field in ("Total RTP", "Game RTP"):
-            value = _number(self.meta.get(field))
-            if value and value > 0:
-                return value / 100 if value > 1.5 else value
-        staked = _number(self.meta.get("Total amount staked"))
-        paid = _number(self.meta.get("Total amount paid"))
-        if staked and paid and 0.1 < paid / staked < 2:
-            return paid / staked
-        self.notes.append(
-            "report metadata has no overall RTP (Total RTP / Game RTP / staked+paid); "
-            "values are each component's share of total win, not RTP")
-        return 1.0
+    def _computed(self, component: str, path: List[str], places: int, scale: float) -> Any:
+        """A value the aggregate computed, or `_UNAVAILABLE`.
+
+        Nothing is derived here: a value the aggregate has no formula for is left null
+        and reported, never worked out from the report by an assumption.
+        """
+        value = self.aggregate.get(component)
+        if value is None:
+            self.notes.append(f"{_label(path)}: the aggregate has no {component!r} formula (left null)")
+            return _UNAVAILABLE
+        return round(value * scale, places)
 
 
 def _number(value: Any) -> Optional[float]:

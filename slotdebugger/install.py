@@ -8,12 +8,13 @@ import os
 import shutil
 from importlib import resources
 
-SKILLS = ("slot-debugger", "sequential-thinking")
+SKILLS = ("slot-debugger", "sequential-thinking", "aggregate-review")
 HOOK_COMMAND = "slotdebug think --status"
 HOOK_MARKER = "slotdebug think"
 RULE_DESCRIPTIONS = {
     "slot-debugger": "Debug slot-game RTP reports with the slotdebug CLI",
-    "sequential-thinking": "Step-by-step reasoning with persisted plan/thought state via `slotdebug think`",
+    "aggregate-review": "Check and correct a generated aggregate.json against the game's engine and volume tester",
+    "sequential-thinking": "Step-by-step reasoning with persisted plan/thought state via `slotdebug think`; debug a report against the expected report (diff -> targets -> branches -> findings)",
 }
 
 

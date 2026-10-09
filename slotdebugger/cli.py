@@ -5,6 +5,7 @@ import json
 import os
 import sys
 
+import rtp_aggregator
 from slotdebugger import install, pipeline, report_formatter
 from slotdebugger.workspace import Workspace, WorkspaceError
 from slotdebugger.registry import (
@@ -60,29 +61,153 @@ def _confine_think_args(ws: Workspace, args: list) -> list:
     return args
 
 
-def _shape(result, ws, report, explicit):
-    """Re-shape the analysis to the game's `expected_rtp_report.json`, if it has one.
+def _expected(ws, report, explicit):
+    """Path of the game's `expected_rtp_report.json`, or None.
 
     Looked for beside the report, in the workspace (root, `data/`, `reports/`) and in
-    the project directory holding it. Without one, the native analysis format is used.
+    the project directory holding it.
     """
     dirs = [os.path.dirname(os.path.abspath(report))]
     if ws:
         dirs += [ws.root, ws.path("data"), ws.reports, os.path.dirname(ws.root)]
     else:
         dirs.append(os.getcwd())
-    path = explicit or report_formatter.find(*dirs)
-    if not path:
+    return explicit or report_formatter.find(*dirs)
+
+
+def _shape(result, template, path):
+    """Re-shape the analysis to the game's expected report; native format without one."""
+    if template is None:
         return result, []
-    output, notes = report_formatter.apply(report_formatter.load(path), result)
+    output, notes = report_formatter.apply(template, result)
     return output, [f"formatted like {path}"] + notes
+
+
+def _find_volume_tester(ws, report, explicit):
+    """The game's volume_tester.py: given, or beside the report / in the workspace / in its tests/."""
+    if explicit:
+        if not os.path.isfile(explicit):
+            raise WorkspaceError(f"no such volume tester: {explicit}")
+        return explicit
+    dirs = [os.path.dirname(os.path.abspath(report))]
+    dirs += [ws.root, ws.path("data"), os.path.dirname(ws.root)] if ws else [os.getcwd()]
+    for d in dirs:
+        for candidate in (os.path.join(d, "volume_tester.py"), os.path.join(d, "tests", "volume_tester.py")):
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def _find_engine(vt_path, explicit):
+    """The game's engine.py: given, or beside the volume tester / one directory above it."""
+    if explicit:
+        if not os.path.isfile(explicit):
+            raise WorkspaceError(f"no such engine: {explicit}")
+        return explicit
+    if not vt_path:
+        return None
+    here = os.path.dirname(os.path.abspath(vt_path))
+    for d in (here, os.path.dirname(here)):
+        if os.path.isfile(os.path.join(d, "engine.py")):
+            return os.path.join(d, "engine.py")
+    return None
+
+
+def _ask_aggregate_path() -> str:
+    """Ask the user where the aggregate specification is; only possible on a terminal."""
+    if not sys.stdin.isatty():
+        raise WorkspaceError("--use-aggregate: no workspace to find an aggregate in; "
+                             "pass its path (--use-aggregate PATH)")
+    return input("Path to the aggregate.json to use (written if empty): ").strip()
+
+
+def _is_empty(text: str) -> bool:
+    """A file with no content, or a JSON object with nothing in it."""
+    if not text.strip():
+        return True
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False  # corrupt is not empty: never overwrite what we cannot read
+    return not data
+
+
+def _resolve_aggregate(ws, report, given):
+    """Where `--use-aggregate` points, and its content if it has any.
+
+    PATH, else this report's saved `aggregate.json`, else (no workspace) ask. A file that
+    is missing or empty comes back as `(path, None)` and is the one case that gets written.
+    """
+    path = given or (ws.aggregate_path(report) if ws else None) or _ask_aggregate_path()
+    if not path:
+        raise WorkspaceError("--use-aggregate: no aggregate specification path given")
+    if not os.path.isfile(path):
+        return path, None
+    with open(path) as f:
+        text = f.read()
+    if _is_empty(text):
+        return path, None
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise WorkspaceError(f"{path}: not valid JSON ({e}); fix or empty it") from None
+    if not isinstance(doc, dict):
+        raise WorkspaceError(f"{path}: an aggregate specification must be a JSON object")
+    if not doc.get("components"):
+        return path, None  # has other keys but no formulas: nothing to preserve
+    return path, doc
+
+
+def _write_if_empty(ws, report, path, document) -> list:
+    """Write a generated aggregate to `path`, and the inputs beside it only if that file is empty."""
+    formulas, inputs = rtp_aggregator.split(document)
+    Workspace._write_json(path, formulas)
+    wrote = [path]
+    inputs_file = ws.inputs_path(report) if ws and path == ws.aggregate_path(report) else None
+    if inputs_file and (not os.path.isfile(inputs_file)
+                        or _is_empty(open(inputs_file).read())):
+        ws._write_json(inputs_file, inputs)
+        wrote.append(inputs_file)
+    return wrote
 
 
 def _analyze(ws, args) -> int:
     """Analyze RTP report - command handler."""
     report = ws.resolve_report(args.file) if ws else args.file
-    result = pipeline.analyze(report)
-    output, notes = _shape(result, ws, report, args.expected)
+    vt_path = _find_volume_tester(ws, report, args.volume_tester)
+    engine = _find_engine(vt_path, args.engine)
+    expected_path = _expected(ws, report, args.expected)
+    template = report_formatter.load(expected_path) if expected_path else None
+    use = args.use_aggregate is not None
+    fixed_path, fixed = _resolve_aggregate(ws, report, args.use_aggregate) if use else (None, None)
+    result = pipeline.analyze(report, vt_path, ws.info().get("game") if ws else None, template, engine,
+                              reviewed=ws.load_reviewed(report) if ws and fixed is None else None,
+                              fixed=fixed)
+    document = result["aggregate"].pop("document")
+    status = result["aggregate"]["status"]
+    if status == "provided":  # nothing aggregate-related is created or rewritten
+        result["aggregate"]["file"] = fixed_path
+        print(f"using aggregate specification {fixed_path} (not modified)", file=sys.stderr)
+    elif use:  # the specification was missing or empty: the one case where it is written
+        result["aggregate"]["file"] = fixed_path
+        for written in _write_if_empty(ws, report, fixed_path, document):
+            print(f"aggregate specification was empty; wrote {written}", file=sys.stderr)
+    elif ws:
+        if status == "reviewed":
+            result["aggregate"]["file"] = ws.aggregate_path(report)
+            # formulas are the reviewed ones; the inputs are always this report's own
+            ws._write_json(ws.inputs_path(report), rtp_aggregator.split(document)[1])
+            print(f"using reviewed aggregate {result['aggregate']['file']}", file=sys.stderr)
+        else:
+            if status == "reviewed-stale":
+                print(f"note: the report changed since the aggregate was reviewed; old one kept as "
+                      f"{ws.set_aside_aggregate(report)}", file=sys.stderr)
+            result["aggregate"]["file"] = ws.save_aggregate(report, document)
+            print(f"saved -> {result['aggregate']['file']} (+ {os.path.basename(ws.inputs_path(report))})",
+                  file=sys.stderr)
+    else:
+        result["aggregate"]["file"] = None
+    output, notes = _shape(result, template, expected_path)
     for note in notes:
         print(f"note: {note}", file=sys.stderr)
     text = json.dumps(output, indent=2)
@@ -98,6 +223,53 @@ def _analyze(ws, args) -> int:
             f.write(text + "\n")
     else:
         print(text)
+    return 0
+
+
+def _aggregate(ws, args) -> int:
+    """List what in a report's generated aggregate.json needs checking; optionally mark it reviewed."""
+    if not ws:
+        raise WorkspaceError("no workspace found; run `slotdebug setup` first")
+    report = ws.resolve_report(args.file)
+    doc = ws.load_aggregate(report)
+    if doc is None:
+        raise WorkspaceError(f"no aggregate for {args.file}; run `slotdebug analyze --file {args.file}` first")
+    findings = rtp_aggregator.check(doc)
+    if args.mark_reviewed:
+        if any(f["code"] == "invalid" for f in findings):
+            print(json.dumps({"reviewed": False, "findings": findings}, indent=2))
+            raise WorkspaceError("not marked reviewed: the aggregate does not parse/evaluate")
+        doc["reviewed"] = True
+        ws.save_aggregate(report, doc)
+    print(json.dumps({"file": ws.aggregate_path(report), "reviewed": doc.get("reviewed") is True,
+                      "findings": findings}, indent=2))
+    return 0
+
+
+def _diff(ws, args) -> int:
+    """Compare the saved analysis with the expected report; write and print the keys that differ."""
+    if not ws:
+        raise WorkspaceError("no workspace found; run `slotdebug setup` first")
+    report = ws.resolve_report(args.file)
+    expected_path = _expected(ws, report, args.expected)
+    if not expected_path:
+        raise WorkspaceError(f"no {report_formatter.NAME} found; pass --expected PATH")
+    analysis_path = ws.analysis_path(report)
+    if not os.path.isfile(analysis_path):
+        raise WorkspaceError(f"no analysis for {args.file}; run `slotdebug analyze --file {args.file}` first")
+    expected = report_formatter.load(expected_path)
+    actual = ws._read_json(analysis_path)
+    if isinstance(expected, dict) and isinstance(actual, dict) and not set(expected) <= set(actual):
+        raise WorkspaceError(f"{analysis_path} is not in the shape of {expected_path}; re-run "
+                             f"`slotdebug analyze --file {args.file} --expected {expected_path}`")
+    result = report_formatter.diff(expected, actual, args.tolerance)
+    document = {"report": os.path.basename(report), "expected": expected_path, "analysis": analysis_path,
+                "open": report_formatter.open_keys(result), **result}
+    out = ws.diff_path(report)
+    ws._write_json(out, document)
+    print(json.dumps(document, indent=2))
+    s = result["summary"]
+    print(f"{s['mismatch']} mismatch, {s['missing']} missing, {s['ok']} ok; saved -> {out}", file=sys.stderr)
     return 0
 
 
@@ -198,6 +370,33 @@ def _register_all_commands() -> None:
                     "(default: expected_rtp_report.json beside the report or in the workspace)"
                 ),
                 "required": False
+            },
+            "use-aggregate": {
+                "type": "string",
+                "description": (
+                    "Use the aggregate specification as it is. PATH, or the report's saved "
+                    "aggregate.json, or (no workspace) the user is asked for a path. A file with "
+                    "content is never overwritten; a missing or empty one is generated and written"
+                ),
+                "required": False
+            },
+            "engine": {
+                "type": "string",
+                "description": (
+                    "Game's engine.py; read with the volume tester to learn which events each "
+                    "total is made of (default: engine.py beside the volume tester or one "
+                    "directory above)"
+                ),
+                "required": False
+            },
+            "volume-tester": {
+                "type": "string",
+                "description": (
+                    "Game's volume_tester.py; its event names are cross-checked against the "
+                    "report when aggregate.json is built (default: volume_tester.py beside the "
+                    "report or in the workspace)"
+                ),
+                "required": False
             }
         },
         returns={
@@ -210,10 +409,57 @@ def _register_all_commands() -> None:
         examples=[
             "slotdebug analyze --file reports/game_report.xlsx",
             "slotdebug analyze --file report.xlsx --out analysis/result.json",
-            "slotdebug analyze --file report.xlsx --expected expected_rtp_report.json"
+            "slotdebug analyze --file report.xlsx --expected expected_rtp_report.json",
+            "slotdebug analyze --file report.xlsx --volume-tester tests/volume_tester.py --engine engine.py",
+            "slotdebug analyze --file report.xlsx --use-aggregate            # use the saved aggregate.json; write it only if empty",
+            "slotdebug analyze --file report.xlsx --use-aggregate my_aggregate.json"
         ]
     )
     
+    registry.register(
+        name="aggregate",
+        description=(
+            "List what in a report's generated aggregate.json is wrong or unproven (findings, "
+            "each with a fix direction); --mark-reviewed after correcting it so `analyze` keeps it"
+        ),
+        func=_aggregate,
+        args={
+            "file": {"type": "string", "description": "Report name in workspace reports/",
+                     "required": True},
+            "mark-reviewed": {"type": "boolean",
+                              "description": "Mark the corrected aggregate reviewed (refused if it does not evaluate)",
+                              "required": False},
+        },
+        returns={"type": "object", "description": "file, reviewed flag and findings"},
+        examples=["slotdebug aggregate --file report.xlsx",
+                  "slotdebug aggregate --file report.xlsx --mark-reviewed"],
+    )
+
+    registry.register(
+        name="diff",
+        description=(
+            "Compare a report's saved analysis with the game's expected_rtp_report.json, key by "
+            "key; writes analysis/<report>.diff.json whose `open` list is every key that is not "
+            "within tolerance (mismatch or missing) -- the keys a debugging session must explain"
+        ),
+        func=_diff,
+        args={
+            "file": {"type": "string", "description": "Report name in workspace reports/ (run analyze first)",
+                     "required": True},
+            "expected": {"type": "string",
+                         "description": "Expected report (default: found as analyze finds it)",
+                         "required": False},
+            "tolerance": {"type": "number",
+                          "description": "RTP tolerance in the expected report's scale "
+                                         "(default 0.001 of a stake: 0.1 in percent, 0.001 as a fraction)",
+                          "required": False},
+        },
+        returns={"type": "object", "description": "summary, open keys, and expected/actual/delta/status per key"},
+        examples=["slotdebug diff --file report.xlsx",
+                  "slotdebug diff --file report.xlsx --tolerance 0.05",
+                  "slotdebug think --setTargets analysis/report.diff.json"],
+    )
+
     # Register runs command
     registry.register(
         name="runs",
@@ -360,6 +606,27 @@ def main(argv=None) -> int:
     a.add_argument("--expected",
                    help=f"expected RTP report to copy the output format from "
                         f"(default: {report_formatter.NAME} beside the report or in the workspace)")
+    a.add_argument("--use-aggregate", nargs="?", const="", metavar="PATH",
+                   help="use the aggregate specification as it is: PATH, else this report's saved "
+                        "aggregate.json (else you are asked for a path). A file that has content is "
+                        "never overwritten; one that is missing or empty is generated and written")
+    a.add_argument("--engine",
+                   help="game's engine.py; with the volume tester it says how each total is built "
+                        "(default: engine.py beside the volume tester or one directory above)")
+    a.add_argument("--volume-tester",
+                   help="game's volume_tester.py, read for the event names it emits "
+                        "(default: volume_tester.py beside the report or in the workspace)")
+
+    ag = sub.add_parser("aggregate", help="check a report's aggregate.json; list findings to correct")
+    ag.add_argument("--file", required=True, help="report name in the workspace's reports/")
+    ag.add_argument("--mark-reviewed", action="store_true",
+                    help="mark the (corrected) aggregate reviewed so analyze keeps it")
+
+    df = sub.add_parser("diff", help="compare a report's analysis with the expected report, key by key")
+    df.add_argument("--file", required=True, help="report name in the workspace's reports/")
+    df.add_argument("--expected", help=f"expected report (default: {report_formatter.NAME} as analyze finds it)")
+    df.add_argument("--tolerance", type=float,
+                    help="RTP tolerance in the expected report's scale (default: 0.1 in percent, 0.001 as a fraction)")
 
     sub.add_parser("think", help="sequential-thinking CLI (sequential-thinking CLI)")
 
@@ -402,6 +669,10 @@ def main(argv=None) -> int:
             return 0
         if args.cmd == "analyze":
             return _analyze(ws, args)
+        if args.cmd == "aggregate":
+            return _aggregate(ws, args)
+        if args.cmd == "diff":
+            return _diff(ws, args)
     except (OSError, ValueError) as e:  # WorkspaceError is a ValueError
         print(f"error: {e}", file=sys.stderr)
         return 2

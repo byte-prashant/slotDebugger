@@ -63,9 +63,15 @@ division by zero; the message names the chain of components that led there.
 | [ops.py](ops.py) | the seven operations: shape and meaning in one registry |
 | [spec.py](spec.py) | read a spec document; reject one that cannot be trusted |
 | [evaluator.py](evaluator.py) | compute components from inputs, each one once |
+| [builder.py](builder.py) | write `aggregate.json` from a report analysis and a volume tester |
+| [sources.py](sources.py) | read a volume tester and engine for how totals are built |
+| [review.py](review.py) | list what in a generated aggregate is wrong or unproven |
 | [errors.py](errors.py) | `SpecError` and `EvaluationError`, both `ValueError` |
 """
 
+from rtp_aggregator.builder import build, compute, join, key, overall_rtp, split
+from rtp_aggregator.sources import Engine, Event, derive_graph, scan_engine, scan_volume_tester
+from rtp_aggregator.review import check
 from rtp_aggregator.errors import AggregatorError, EvaluationError, SpecError
 from rtp_aggregator.evaluator import Evaluator, evaluate
 from rtp_aggregator.ops import OPS, Op
@@ -75,13 +81,25 @@ __all__ = [
     "AggregatorError",
     "Component",
     "EvaluationError",
+    "Engine",
+    "Event",
     "Evaluator",
     "OPS",
     "Op",
     "SCHEMA_VERSION",
     "Spec",
     "SpecError",
+    "build",
+    "check",
+    "compute",
+    "derive_graph",
     "evaluate",
+    "join",
+    "key",
     "load",
+    "overall_rtp",
     "parse",
+    "scan_engine",
+    "split",
+    "scan_volume_tester",
 ]

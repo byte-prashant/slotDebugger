@@ -22,9 +22,11 @@ is recoverable, a plausible wrong one is not.
 | [template.py](template.py) | find and load the file; read its scale and precision |
 | [naming.py](naming.py) | interpret the game's key names; match them to report rows |
 | [shaper.py](shaper.py) | walk the template, filling in measured values |
+| [diff.py](diff.py) | compare the shaped analysis with the expected report, key by key |
 """
 
-from slotdebugger.report_formatter.shaper import Shaper, apply
+from slotdebugger.report_formatter.diff import diff, open_keys
+from slotdebugger.report_formatter.shaper import Shaper, apply, matched_components
 from slotdebugger.report_formatter.template import NAME, find, load
 
-__all__ = ["NAME", "Shaper", "apply", "find", "load"]
+__all__ = ["NAME", "Shaper", "apply", "diff", "find", "matched_components", "load", "open_keys"]
