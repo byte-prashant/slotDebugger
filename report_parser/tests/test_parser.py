@@ -15,6 +15,8 @@ import os
 import unittest
 import tempfile
 
+import pytest
+
 
 SAMPLE_INPUT = """Engine Name	blazing-7s-cashway
 Engine Version	version-unknown
@@ -140,6 +142,71 @@ class TestXLSXReader(unittest.TestCase):
         finally:
             os.remove(path)
         self.assertEqual(result["metadata"]["Jackpot RTP"], "0")
+
+
+# ==============================
+# METADATA FIELD NORMALIZATION
+# ==============================
+
+# An OGA report: tab-delimited, engine-specific header names, and an .xlsx
+# extension on a file that is not actually a zip archive.
+OGA_INPUT = """TOTAL_SPINS\t1201999130
+TOTAL_STAKE\t750000000.00
+STAKE_SPINS\t1000000000
+TOTAL_WIN\t722699953.150
+RTP\t96.3600
+BG\t(406225308, 305191305.400)
+"""
+
+
+def _process(text, suffix):
+    """Write `text` to a temp file with `suffix` and run it through the parser."""
+    path = tempfile.mktemp(suffix=suffix)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    try:
+        return RTPService(ReaderFactory.get_reader(path)).process(path)
+    finally:
+        os.remove(path)
+
+
+def test_engine_specific_headers_map_to_canonical_names():
+    meta = _process(OGA_INPUT, ".csv")["metadata"]
+    assert meta["Total number of plays"] == "1201999130"
+    assert meta["Total amount paid"] == "722699953.150"
+    assert meta["Game RTP"] == "96.3600"
+
+
+def test_xlsx_extension_on_non_zip_file_falls_back_to_text():
+    # Real reports are exported this way; openpyxl raises BadZipFile on them.
+    meta = _process(OGA_INPUT, ".xlsx")["metadata"]
+    assert meta["Total number of plays"] == "1201999130"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="STAKE_SPINS (count) and TOTAL_STAKE (amount) both normalize to "
+           "'Total amount staked'; the later row silently overwrites the earlier. "
+           "See docs/PLAN_RAG_METADATA_MAPPING.md",
+)
+def test_stake_amount_survives_collision_with_spin_count():
+    """The mapping is checkable by arithmetic, so the bug is provable:
+
+        total_paid / total_staked == reported RTP
+        722699953.150 / 750000000.00 == 0.96360   (correct mapping)
+        722699953.150 / 1000000000   == 0.72270   (STAKE_SPINS wrongly used)
+
+    strict=True is deliberate: once the mapping is fixed this XPASSes, which fails
+    the suite and tells you to delete the marker.
+    """
+    meta = _process(OGA_INPUT, ".csv")["metadata"]
+    staked = float(meta["Total amount staked"])
+    paid = float(meta["Total amount paid"])
+    assert abs(paid / staked - 0.96360) <= 1e-5
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

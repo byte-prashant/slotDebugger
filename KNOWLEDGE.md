@@ -78,7 +78,7 @@ Only the first three-and-a-half boxes exist today. The agent loop, LLM, tools an
 
 ### P1 — the missing pipeline stages (per Read.md)
 - [ ] **CLI entrypoint** (`slotdebug --file report.csv`) — uncomment/finish the parser CLI and chain parse → normalize → analyze, output JSON.
-- [ ] **Expected-vs-actual comparison**: normalizer currently has no *target* RTP. Need a design-doc/PAR-sheet input (expected RTP per component) → compute diff, **sort by impact**, flag critical issues. (Read.md's "Calculate Diff / Sort by Impact / Critical Issues" is entirely unimplemented.)
+- [~] **Expected-vs-actual comparison**: the *input* now exists — `expected_rtp_report.json` (any shape, the game's own keys) makes `analyze` emit the same shape with measured values, via [slotdebugger/report_formatter/](slotdebugger/report_formatter/), so the two files can be diffed. Still missing: computing the diff in-tool, **sorting by impact**, and flagging critical issues (Read.md's "Calculate Diff / Sort by Impact / Critical Issues").
 - [ ] **Plan generator**: issues → plan steps (detect type: base game / free spins / bonus / jackpot; then reels → weights → win calc → RNG) and feed `think.py --setPlan`.
 - [ ] **Agent loop**: get state → current step → build prompt → LLM thought → validate → `think.py` → tool → loop until `nextThoughtNeeded=false`. Prefer importing `think` as a library (refactor `main()` into functions) rather than shelling out.
 - [ ] **LLM adapter** (Claude API; structured thought JSON output; retries/validation). Keep behind an interface for tests.
@@ -106,7 +106,7 @@ Only the first three-and-a-half boxes exist today. The agent loop, LLM, tools an
 
 ## 7. Open questions for the owner
 
-- What does the **expected/target RTP source** look like (PAR sheet, math doc, JSON)?
+- What does the **expected/target RTP source** look like (PAR sheet, math doc, JSON)? *Answered in part: a JSON file, `expected_rtp_report.json`, whose shape and keys are the game's own; slotdebugger copies that shape rather than imposing one.*
 - What **game config formats** (reel strips, weights, paytable) will the tools read — per-engine, or one canonical schema?
 - Is the report's second tuple field always frequency, and is the first always win amount? Can the engine emit headers to remove the guesswork?
 - Should the agent run fully autonomously, or stop for human confirmation before running simulations?

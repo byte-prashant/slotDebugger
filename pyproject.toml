@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slotdebugger"
+version = "0.1.0"
+description = "Slot RTP report analysis and sequential-thinking CLI for an RTP debugging agent"
+requires-python = ">=3.10"
+dependencies = ["openpyxl>=3.1.0"]
+
+[project.scripts]
+slotdebug = "slotdebugger.cli:main"
+
+[tool.setuptools]
+packages = ["slotdebugger", "slotdebugger.report_formatter", "report_parser", "RTPNormalizer", "rtp_aggregator", "sequential_thinking"]
+
+[tool.setuptools.package-data]

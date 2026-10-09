@@ -14,7 +14,8 @@ try:
 except NameError:
     BASE_DIR = os.getcwd()
 
-STATE_FILE = os.environ.get("THINK_STATE_FILE") or os.path.join(BASE_DIR, ".think_state.json")
+# Default to the working directory so an installed package never writes into site-packages.
+STATE_FILE = os.environ.get("THINK_STATE_FILE") or os.path.join(os.getcwd(), ".think_state.json")
 
 
 class ThinkError(ValueError):
@@ -62,13 +63,25 @@ def load_state() -> State:
 
 
 def save_state(state: State):
-    with open(STATE_FILE, "w") as f:
-        json.dump({
-            "thoughtHistory": state.thoughtHistory,
-            "branches": state.branches,
-            "plan": state.plan,
-            "currentStepIndex": state.currentStepIndex,
-        }, f, indent=2)
+    tmp = f"{STATE_FILE}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(state_to_dict(state), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, STATE_FILE)  # atomic: a crash never leaves a half-written state file
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def state_to_dict(state: State) -> Dict:
+    return {
+        "thoughtHistory": state.thoughtHistory,
+        "branches": state.branches,
+        "plan": state.plan,
+        "currentStepIndex": state.currentStepIndex,
+    }
 
 
 # ----------------------
@@ -198,7 +211,7 @@ def parse_plan(value: Optional[str]) -> Optional[List[str]]:
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--state", help="state file path (default: .think_state.json beside this script, or $THINK_STATE_FILE)")
+    parser.add_argument("--state", help="state file path (default: ./.think_state.json, or $THINK_STATE_FILE)")
     parser.add_argument("--thought")
     parser.add_argument("--thoughtNumber", type=int)
     parser.add_argument("--totalThoughts", type=int)
@@ -215,6 +228,8 @@ def main(argv=None):
     parser.add_argument("--nextStep", action="store_true", help="Advance to next plan step")
 
     parser.add_argument("--status", action="store_true")
+    parser.add_argument("--history", action="store_true", help="print all recorded thoughts")
+    parser.add_argument("--export", metavar="PATH", help="write full state (plan, thoughts, branches) to PATH as JSON")
     parser.add_argument("--reset", action="store_true")
 
     args = parser.parse_args(argv)
@@ -241,9 +256,20 @@ def run(args, parser):
 
     state = load_state()
 
-    modes = [bool(args.setPlan), args.nextStep, args.status, bool(args.thought)]
+    modes = [bool(args.setPlan), args.nextStep, args.status, args.history, bool(args.export), bool(args.thought)]
     if sum(modes) > 1:
-        raise ThinkError("use only one of --setPlan, --nextStep, --status, --thought per call")
+        raise ThinkError("use only one of --setPlan, --nextStep, --status, --history, --export, --thought per call")
+
+    if args.history:
+        for t in state.thoughtHistory:
+            print(format_thought(t))
+        return
+
+    if args.export:
+        with open(args.export, "w") as f:
+            json.dump(state_to_dict(state), f, indent=2)
+        print({"exported": args.export, "thoughts": len(state.thoughtHistory)})
+        return
 
     # set plan
     if args.setPlan:

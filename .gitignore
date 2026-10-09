@@ -3,3 +3,6 @@ __pycache__/
 .idea/
 .pytest_cache/
 .think_state.json
+*.egg-info/
+build/
+dist/
