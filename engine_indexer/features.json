@@ -1,0 +1,38 @@
+{
+  "features": {
+    "respin": {
+      "description": "Trace respin report events from Volume Tester handlers into the engine implementation.",
+      "tester_roots": [
+        "ZeusUnleashedRtp94EngineVolumeTester.gameplay",
+        "ZeusUnleashedRtp94EngineVolumeTester.dump_map_result"
+      ],
+      "engine_roots": [
+        "engine.ZeusUnleashedRtp94Engine.respin_game"
+      ],
+      "report_events": [
+        "respin_hits_base_game",
+        "respin_total_line_winnings",
+        "respin_top_up_wins",
+        "respin_freespin_hits",
+        "respin_final_height_sum"
+      ]
+    },
+    "freespin": {
+      "description": "Trace free-spin report events from Volume Tester handlers into the engine implementation.",
+      "tester_roots": [
+        "ZeusUnleashedRtp94EngineVolumeTester.gameplay",
+        "ZeusUnleashedRtp94EngineVolumeTester.dump_map_result"
+      ],
+      "engine_roots": [
+        "engine.ZeusUnleashedRtp94Engine.freespin"
+      ],
+      "report_events": [
+        "freespin_hits_base_game",
+        "freespin_total_winnings",
+        "freespin_retriggered",
+        "free_spin_session_win",
+        "freespin_respin_session_wins"
+      ]
+    }
+  }
+}

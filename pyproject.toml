@@ -13,7 +13,7 @@ dependencies = ["openpyxl>=3.1.0"]
 slotdebug = "slotdebugger.cli:main"
 
 [tool.setuptools]
-packages = ["slotdebugger", "slotdebugger.report_formatter", "report_parser", "RTPNormalizer", "rtp_aggregator", "sequential_thinking"]
+packages = ["slotdebugger", "slotdebugger.report_formatter", "report_parser", "RTPNormalizer", "rtp_aggregator", "sequential_thinking", "engine_indexer"]
 
 [tool.setuptools.package-data]
-slotdebugger = ["skills/*.md"]
+slotdebugger = ["skills/*.md", "agents/*.md"]

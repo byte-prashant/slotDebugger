@@ -193,6 +193,7 @@ Here an RTP total doesn't add up and the reason is in the game code. This plan d
 replace `slotdebug analyze`, `slotdebug aggregate` or the aggregate-review skill; it
 records why their numbers come out as they do.
 
+0. **Start from the maps.** `slotdebug trace-tester --file <report> ...` writes the tester, engine and report maps plus `analysis/<report>.summary.md`. Read its problems first: each comes with a file:line to use as `--evidence`. Use `slotdebug map tree --row <row>` for a report row's full chain, `map method --name <m>` for any engine method, and `map problems` for the ranked list.
 1. **Pick the failing total.** Take one `open` key from `slotdebug diff`, or one `Mismatch in <parent>` / `incomplete_total` from `slotdebug analyze` / `slotdebug aggregate`. Note it as the thought, with the command as evidence.
 2. **Map events to result fields.** In `volume_tester.py`, find each `dump_event(name, p.result['field'])` that feeds the total. Check that each `field` is a key the engine actually puts in its result dict; a name the tester reads but the engine never sets explains a row that can't be linked.
 3. **Trace each field in engine.py.** Follow the field back to the variable it is assigned from, and through every assignment of that variable. Write down anything that is not a plain sum: multipliers, function calls, conditions (e.g. a bonus that only pays with 3+ reels), and anything applied *after* the total is formed, such as `check_winnings_cap`.

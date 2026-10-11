@@ -31,7 +31,11 @@ only signal.
 | `report_parser/` | CSV/XLSX/tab-delimited → `RTPReport`; metadata field normalization |
 | `RTPNormalizer/` | normalize components, build dependency graph, analyze |
 | `sequential_thinking/` | `think.py` — persistent step-by-step reasoning CLI |
+| `engine_indexer/` | `trace-tester`: run the volume tester traced (report key → tester line → response key); `index`: response key → engine code, by reading game + OGLE/OGA; `views.py` + `map`: trees, tables, problems, Markdown summaries |
 | `slotdebugger/` | CLI, pipeline, command registry, workspace, installer, bundled skills |
+| `slotdebugger/hooks.py` | editor hooks: session-start context, post-edit re-index, the agent's read-only guard, finish gate, result hand-off, prompt hint (`slotdebug hook`) |
+| `slotdebugger/agents/` | the `slot-debugger` subagent definition (diagnose only) registered by `setup` / `install` / the plugin |
+| `slotdebugger/agent_report.py` | `slotdebug report`: the agent's structured diagnosis from the think session, diff and maps |
 | `slotdebugger/report_formatter/` | re-shape the analysis into the game's own `expected_rtp_report.json` format |
 
 Tests sit in `<package>/tests/`, except `slotdebugger/test_slotdebug.py`, which
@@ -62,8 +66,11 @@ Two places, both in [slotdebugger/cli.py](slotdebugger/cli.py):
 - an entry in `_register_all_commands()`
 
 The registry entry is what makes the command appear in `slotdebug command-list`, in
-each workspace's `data/commands.json`, and — once it exists — in the MCP layer. Skip
-it and the command works but is invisible to agents.
+each workspace's `data/commands.json`, in the always-on command reference `setup` writes
+(a marked block in the project's `CLAUDE.md` and the `.cursor/rules/slotdebug-commands.mdc`
+rule), and — once it exists — in the MCP layer. Skip it and the command works but is
+invisible to agents; `test_every_cli_command_is_registered` fails. List each flag under
+`args` (`"positional": True` for a positional one) so the reference shows it.
 
 ### Changing the workspace layout
 

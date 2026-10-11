@@ -183,6 +183,7 @@ def format_conclusion(branch_id, c):
 
 def format_finding(n, f):
     explains = f"\n🎯 explains {', '.join(f['targets'])}" if f.get("targets") else ""
+    explains += f"\n🔧 proposed fix: {f['fix']}" if f.get("fix") else ""
     return (f"📌 Finding {n} (after thought {f['afterThought']}){explains}\n"
             f"{f['finding']}{format_evidence(f['evidence'])}")
 
@@ -432,6 +433,7 @@ def main(argv=None):
     parser.add_argument("--verdict", choices=("confirmed", "refuted"))
     parser.add_argument("--reason", help="why the branch is confirmed or refuted")
     parser.add_argument("--finding", help="record a final finding (requires --evidence)")
+    parser.add_argument("--fix", help="with --finding: the change proposed to fix it (for whoever applies fixes)")
 
     # what the session must explain, and what each branch is about
     parser.add_argument("--setTargets", metavar="DIFF_OR_KEYS",
@@ -487,6 +489,8 @@ def run(args, parser):
         raise ThinkError("--cause applies only to --thought (a branch)")
     if args.force and not args.thought:
         raise ThinkError("--force applies only to --thought")
+    if args.fix and not args.finding:
+        raise ThinkError("--fix applies only to --finding")
 
     if args.setTargets:
         targets = parse_targets(args.setTargets)
@@ -639,6 +643,8 @@ def record_finding(state: State, args):
     check_targets(state, targets)
     finding = {"finding": args.finding.strip(), "evidence": evidence, "targets": targets,
                "afterThought": len(state.thoughtHistory)}
+    if (args.fix or "").strip():
+        finding["fix"] = args.fix.strip()
     if not finding["finding"]:
         raise ThinkError("--finding must not be empty")
     pending = open_branches(state)

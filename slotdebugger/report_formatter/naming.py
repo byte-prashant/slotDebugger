@@ -60,7 +60,7 @@ ROLES = {
 
 # Keys *inside* a component's own object.
 ATTRS = {
-    "rtp": "rtp", "value": "rtp", "total": "rtp", "contribution": "rtp",
+    "rtp": "rtp", "value": "rtp", "total": "total rtp", "contribution": "rtp",
     "share": "share",
     "hitrate": "hit_rate", "hits": "hit_rate", "frequency": "hit_rate", "freq": "hit_rate",
 }

@@ -6,8 +6,10 @@
       analysis/        analyze output, one JSON per report
       data/runs.json   index of analysis runs (actual RTP per report)
       state/           thinking-CLI state (.think_state.json) and exports
+      tester/          verbatim copy of the game's volume tester that trace-tester runs
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -18,8 +20,8 @@ import rtp_aggregator
 
 DIR_NAME = "slotdebugger"
 MARKER = "workspace.json"
-SUBDIRS = ("reports", "analysis", "data", "state")
-SCHEMA_VERSION = 2
+SUBDIRS = ("reports", "analysis", "data", "state", "tester")
+SCHEMA_VERSION = 3
 
 
 class WorkspaceError(ValueError):
@@ -120,6 +122,49 @@ class Workspace:
         self._write_json(self.runs_file, [])
         return ["reset unreadable data/runs.json"]
 
+    # ---- the volume tester copy ----
+    def tester_record(self) -> Optional[Dict]:
+        """`{"original", "file", "sha256", "copied"}` for the copy in tester/, or None."""
+        record = self.info().get("tester")
+        if not isinstance(record, dict) or not os.path.isfile(self.path(record.get("file", ""))):
+            return None
+        return record
+
+    def tester_status(self) -> Optional[str]:
+        """`current` (the original still matches the copy), `changed`, `original-missing`, or None."""
+        record = self.tester_record()
+        if record is None:
+            return None
+        if not os.path.isfile(record["original"]):
+            return "original-missing"
+        return "current" if _sha256(record["original"]) == record["sha256"] else "changed"
+
+    def copy_tester(self, original: str) -> Dict:
+        """Copy the tester into tester/ byte for byte and record where it came from.
+
+        A previous copy with other content is moved aside as `<name>.<sha8>.py`, never
+        removed: maps already built from it still name it.
+        """
+        original = os.path.realpath(original)
+        if not os.path.isfile(original):
+            raise WorkspaceError(f"no such volume tester: {original}")
+        digest = _sha256(original)
+        old = self.tester_record()
+        if old and old["sha256"] != digest:
+            current = self.path(old["file"])
+            stem, ext = os.path.splitext(os.path.basename(current))
+            os.replace(current, os.path.join(os.path.dirname(current), f"{stem}.{old['sha256'][:8]}{ext}"))
+        name = os.path.join("tester", os.path.basename(original))
+        if old and old["file"] != name and os.path.isfile(self.path(old["file"])):
+            stem, ext = os.path.splitext(old["file"])
+            os.replace(self.path(old["file"]), self.path(f"{stem}.{old['sha256'][:8]}{ext}"))
+        shutil.copyfile(original, self.path(name))
+        record = {"original": original, "file": name, "sha256": digest, "copied": _now()}
+        info = self.info()
+        info["tester"] = record
+        self._write_json(self.path(MARKER), info)
+        return record
+
     def record_registered(self, skills: List[str], rules: List[str]) -> None:
         """Remember what was registered, so a later `setup` can retire what we drop."""
         info = self._read_json(self.path(MARKER))
@@ -205,6 +250,24 @@ class Workspace:
         """`<report>.diff.json`: the analysis compared with the expected report."""
         return self.analysis_path(report_path)[: -len(".json")] + ".diff.json"
 
+    def tester_map_path(self, report_path: Optional[str]) -> str:
+        """`<report>.tester_map.json` (or `tester_map.json` with no report): report key -> tester line."""
+        if report_path is None:
+            return self.path("analysis", "tester_map.json")
+        return self.analysis_path(report_path)[: -len(".json")] + ".tester_map.json"
+
+    def engine_map_path(self, report_path: Optional[str]) -> str:
+        """`<report>.engine_map.json` (or `engine_map.json`): response key -> engine code."""
+        if report_path is None:
+            return self.path("analysis", "engine_map.json")
+        return self.analysis_path(report_path)[: -len(".json")] + ".engine_map.json"
+
+    def report_map_path(self, report_path: Optional[str]) -> str:
+        """`<report>.report_map.json` (or `report_map.json`): the tester map and engine map joined."""
+        if report_path is None:
+            return self.path("analysis", "report_map.json")
+        return self.analysis_path(report_path)[: -len(".json")] + ".report_map.json"
+
     def aggregate_path(self, report_path: str) -> str:
         """Formulas: `<report>.aggregate.json`. What a reviewer corrects."""
         stem = os.path.splitext(os.path.basename(report_path))[0]
@@ -271,6 +334,11 @@ class Workspace:
         with open(tmp, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
+
+
+def _sha256(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 def _now() -> str:
